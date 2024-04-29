@@ -7,10 +7,11 @@ import mindsdb.utilities.hooks as hooks
 import mindsdb.utilities.profiler as profiler
 from mindsdb.api.http.namespaces.configs.sql import ns_conf
 from mindsdb.api.mysql.mysql_proxy.classes.fake_mysql_proxy import FakeMysqlProxy
-from mindsdb.api.mysql.mysql_proxy.libs.constants.response_type import (
+from mindsdb.api.executor.data_types.response_type import (
     RESPONSE_TYPE as SQL_RESPONSE_TYPE,
 )
-from mindsdb.api.mysql.mysql_proxy.utilities import SqlApiException, SqlApiUnknownError
+from mindsdb.api.executor.exceptions import ExecutorException, UnknownError
+from mindsdb.metrics.metrics import api_endpoint_metrics
 from mindsdb.utilities import log
 from mindsdb.utilities.config import Config
 from mindsdb.utilities.context import context as ctx
@@ -25,6 +26,7 @@ class Query(Resource):
         super().__init__(*args, **kwargs)
 
     @ns_conf.doc("query")
+    @api_endpoint_metrics('POST', '/sql/query')
     def post(self):
         query = request.json["query"]
         context = request.json.get("context", {})
@@ -57,21 +59,21 @@ class Query(Resource):
                             for x in result.columns
                         ],
                     }
-            except SqlApiException as e:
+            except ExecutorException as e:
                 # classified error
                 error_type = "expected"
                 query_response = {
                     "type": SQL_RESPONSE_TYPE.ERROR,
-                    "error_code": e.err_code,
+                    "error_code": 0,
                     "error_message": str(e),
                 }
 
-            except SqlApiUnknownError as e:
+            except UnknownError as e:
                 # unclassified
                 error_type = "unexpected"
                 query_response = {
                     "type": SQL_RESPONSE_TYPE.ERROR,
-                    "error_code": e.err_code,
+                    "error_code": 0,
                     "error_message": str(e),
                 }
 
@@ -111,6 +113,7 @@ class Query(Resource):
 @ns_conf.param("list_databases", "lists databases of mindsdb")
 class ListDatabases(Resource):
     @ns_conf.doc("list_databases")
+    @api_endpoint_metrics('GET', '/sql/list_databases')
     def get(self):
         listing_query = "SHOW DATABASES"
         mysql_proxy = FakeMysqlProxy()

@@ -27,6 +27,7 @@ from mindsdb.api.http.namespaces.databases import ns_conf as databases_ns
 from mindsdb.api.http.namespaces.default import ns_conf as default_ns, check_auth
 from mindsdb.api.http.namespaces.file import ns_conf as file_ns
 from mindsdb.api.http.namespaces.handlers import ns_conf as handlers_ns
+from mindsdb.api.http.namespaces.knowledge_bases import ns_conf as knowledge_bases_ns
 from mindsdb.api.http.namespaces.models import ns_conf as models_ns
 from mindsdb.api.http.namespaces.projects import ns_conf as projects_ns
 from mindsdb.api.http.namespaces.skills import ns_conf as skills_ns
@@ -39,6 +40,7 @@ from mindsdb.interfaces.database.integrations import integration_controller
 from mindsdb.interfaces.database.database import DatabaseController
 from mindsdb.interfaces.file.file_controller import FileController
 from mindsdb.interfaces.storage import db
+from mindsdb.metrics.server import init_metrics
 from mindsdb.utilities import log
 from mindsdb.utilities.config import Config
 from mindsdb.utilities.context import context as ctx
@@ -168,7 +170,8 @@ def initialize_static():
         if last_gui_version_lv is False:
             return False
 
-        if current_gui_version_lv is not None:
+        # ignore versions like '23.9.2.2'
+        if current_gui_version_lv is not None and len(current_gui_version_lv.version) < 3:
             if current_gui_version_lv >= last_gui_version_lv:
                 return True
         logger.debug("Updating gui..")
@@ -227,7 +230,8 @@ def initialize_app(config, no_studio):
         models_ns,
         chatbots_ns,
         skills_ns,
-        agents_ns
+        agents_ns,
+        knowledge_bases_ns
     ]
 
     for ns in protected_namespaces:
@@ -323,6 +327,7 @@ def initialize_flask(config, init_static_thread, no_studio):
         logger.debug(f"Static path: {static_path}")
 
     app = Flask(__name__, **kwargs)
+    init_metrics(app)
 
     app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', secrets.token_hex(32))
     app.config['SESSION_COOKIE_NAME'] = 'session'

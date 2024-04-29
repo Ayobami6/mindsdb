@@ -1,3 +1,4 @@
+import sys
 from collections import OrderedDict
 from typing import List, Optional
 
@@ -28,15 +29,15 @@ def get_chromadb():
     see https://docs.trychroma.com/troubleshooting#sqlite
     """
 
-    try:
-        import sys
-
-        __import__("pysqlite3")
-        sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-    except ImportError:
-        logger.error(
-            "[Chromadb-handler] pysqlite3 is not installed, this is not a problem for local usage"
-        )  # noqa: E501
+    # if we are using python 3.10 or above, we don't need pysqlite
+    if sys.hexversion < 0x30A0000:
+        try:
+            __import__("pysqlite3")
+            sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+        except ImportError:
+            logger.warn(
+                "Python version < 3.10 and pysqlite3 is not installed. ChromaDB may not work without solving one of these: https://docs.trychroma.com/troubleshooting#sqlite"
+            )  # noqa: E501
 
     try:
         import chromadb
@@ -55,6 +56,8 @@ class ChromaDBHandler(VectorStoreHandler):
         super().__init__(name)
         self.handler_storage = HandlerStorage(kwargs.get("integration_id"))
         self._client = None
+        self.persist_directory = None
+        self.is_connected = False
 
         config = self.validate_connection_parameters(name, **kwargs)
 
@@ -100,8 +103,18 @@ class ChromaDBHandler(VectorStoreHandler):
                 port=client_config["chroma_server_http_port"],
             )
 
+    def _sync(self):
+        # if handler storage is used: sync on every change write operation
+        if self.persist_directory:
+            self.handler_storage.folder_sync(self.persist_directory)
+
     def __del__(self):
-        super().__del__()
+        """Close the database connection."""
+
+        if self.is_connected is True:
+            self._sync()
+
+            self.disconnect()
 
     def connect(self):
         """Connect to a ChromaDB database."""
@@ -113,8 +126,8 @@ class ChromaDBHandler(VectorStoreHandler):
             self.is_connected = True
             return self._client
         except Exception as e:
-            logger.error(f"Error connecting to ChromaDB client, {e}!")
             self.is_connected = False
+            raise Exception(f"Error connecting to ChromaDB client, {e}!")
 
     def disconnect(self):
         """Close the database connection."""
@@ -309,11 +322,19 @@ class ChromaDBHandler(VectorStoreHandler):
         Insert data into the ChromaDB database.
         """
 
-        collection = self._client.get_collection(table_name)
+        collection = self._client.get_or_create_collection(name=table_name)
 
         # drop columns with all None values
 
         data.dropna(axis=1, inplace=True)
+
+        # ensure metadata is a dict, convert to dict if it is a string
+        if data.get(TableField.METADATA.value) is not None:
+            data[TableField.METADATA.value] = data[TableField.METADATA.value].apply(
+                lambda x: x if isinstance(x, dict) else eval(x)
+            )
+
+        # convert to dict
 
         data = data.to_dict(orient="list")
 
@@ -323,6 +344,7 @@ class ChromaDBHandler(VectorStoreHandler):
             embeddings=data[TableField.EMBEDDINGS.value],
             metadatas=data.get(TableField.METADATA.value),
         )
+        self._sync()
 
     def upsert(self, table_name: str, data: pd.DataFrame):
         return self.insert(table_name, data)
@@ -350,6 +372,7 @@ class ChromaDBHandler(VectorStoreHandler):
             embeddings=data[TableField.EMBEDDINGS.value],
             metadatas=data.get(TableField.METADATA.value),
         )
+        self._sync()
 
     def delete(
         self, table_name: str, conditions: List[FilterCondition] = None
@@ -366,12 +389,14 @@ class ChromaDBHandler(VectorStoreHandler):
             raise Exception("Delete query must have at least one condition!")
         collection = self._client.get_collection(table_name)
         collection.delete(ids=id_filters, where=filters)
+        self._sync()
 
     def create_table(self, table_name: str, if_not_exists=True):
         """
         Create a collection with the given name in the ChromaDB database.
         """
         self._client.create_collection(table_name, get_or_create=if_not_exists)
+        self._sync()
 
     def drop_table(self, table_name: str, if_exists=True):
         """
@@ -379,14 +404,12 @@ class ChromaDBHandler(VectorStoreHandler):
         """
         try:
             self._client.delete_collection(table_name)
+            self._sync()
         except ValueError:
             if if_exists:
-                return Response(resp_type=RESPONSE_TYPE.OK)
+                return
             else:
-                return Response(
-                    resp_type=RESPONSE_TYPE.ERROR,
-                    error_message=f"Table {table_name} does not exist!",
-                )
+                raise Exception(f"Collection {table_name} does not exist!")
 
     def get_tables(self) -> HandlerResponse:
         """
@@ -424,7 +447,7 @@ connection_args = OrderedDict(
     },
     persist_directory={
         "type": ARG_TYPE.STR,
-        "description": "persistence directory for chroma",
+        "description": "persistence directory for ChromaDB",
         "required": False,
     },
 )
@@ -432,5 +455,5 @@ connection_args = OrderedDict(
 connection_args_example = OrderedDict(
     host="localhost",
     port="8000",
-    persist_directory="chroma",
+    persist_directory="chromadb",
 )

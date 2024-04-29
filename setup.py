@@ -3,32 +3,16 @@ import glob
 
 from setuptools import find_packages, setup
 
-# An special env var that allows us to disable the installation of the default extras for advanced users / containers / etc
+# A special env var that allows us to disable the installation of the default extras for advanced users / containers / etc
 MINDSDB_PIP_INSTALL_DEFAULT_EXTRAS = (
     True
     if os.getenv("MINDSDB_PIP_INSTALL_DEFAULT_EXTRAS", "true").lower() == "true"
     else False
 )
 DEFAULT_PIP_EXTRAS = [
-    'postgres',
-    'mssql',
-    'mysql',
-    'mariadb',
-    'scylla',
-    'cassandra',
-    'clickhouse',
-    'snowflake',
-    'slack',
-    'file',
-    'sqlite',
-    'mongodb',
-    'langchain',
-    'openai',
-    'byom',
-    'statsforecast',
-    'timegpt',
-    'binance',
-    'twitter',
+    line.split("#")[0].rstrip()
+    for line in open("default_handlers.txt").read().splitlines()
+    if not line.strip().startswith("#")
 ]
 
 
@@ -187,5 +171,5 @@ setup(
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.8,<3.11",
 )

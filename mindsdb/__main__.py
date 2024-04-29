@@ -14,7 +14,6 @@ import asyncio
 import secrets
 import traceback
 import threading
-from textwrap import dedent
 from packaging import version
 
 from mindsdb.__about__ import __version__ as mindsdb_version
@@ -27,7 +26,7 @@ from mindsdb.utilities.ml_task_queue.consumer import start as start_ml_task_queu
 from mindsdb.interfaces.jobs.scheduler import start as start_scheduler
 from mindsdb.utilities.config import Config
 from mindsdb.utilities.ps import is_pid_listen_port, get_child_pids
-from mindsdb.utilities.functions import args_parse, get_versions_where_predictors_become_obsolete
+from mindsdb.utilities.functions import args_parse, get_handler_install_message, get_versions_where_predictors_become_obsolete
 from mindsdb.interfaces.database.integrations import integration_controller
 import mindsdb.interfaces.storage.db as db
 from mindsdb.integrations.utilities.install import install_dependencies
@@ -77,7 +76,13 @@ def do_clean_process_marks():
 
 
 if __name__ == '__main__':
-    # ----------------  __init__.py section ------------------
+    # warn if less than 1Gb of free RAM
+    if psutil.virtual_memory().available < (1 << 30):
+        logger.warning(
+            'The system is running low on memory. '
+            + 'This may impact the stability and performance of the program.'
+        )
+
     clean_process_marks()
     ctx.set_default()
     args = args_parse()
@@ -157,18 +162,9 @@ if __name__ == '__main__':
             pass
 
     is_cloud = config.get("cloud", False)
-    # need configure migration behavior by env_variables
-    # leave 'is_cloud' for now, but needs to be removed further
-    run_migration_separately = os.environ.get("SEPARATE_MIGRATIONS", False)
-    if run_migration_separately in (False, "false", "False", 0, "0", ""):
-        run_migration_separately = False
-        logger.info("Will run migrations here..")
-    else:
-        run_migration_separately = True
-        logger.info("Migrations will be run separately..")
 
-    if not is_cloud and not run_migration_separately:
-        logger.info("Applying database migrations:")
+    if not is_cloud:
+        logger.debug("Applying database migrations")
         try:
             from mindsdb.migrations import migrate
             migrate.migrate_to_head()
@@ -212,12 +208,8 @@ if __name__ == '__main__':
         import_meta = handler_meta.get("import", {})
         if import_meta.get("success", False) is not True:
             logger.info(
-                dedent(
-                    """
-                Some handlers cannot be imported. You can check list of available handlers by execute command in sql editor:
-                    select * from information_schema.handlers;
-            """
-                )
+                """Some handlers cannot be imported. You can check list of available handlers by execute command in sql editor:
+select * from information_schema.handlers;"""
             )
             break
     # @TODO Backwards compatibility for tests, remove later
@@ -228,12 +220,10 @@ if __name__ == '__main__':
         import_meta = handler_meta.get("import", {})
         dependencies = import_meta.get("dependencies")
         if import_meta.get("success", False) is not True:
-            logger.info(
-                f"Dependencies for the handler '{handler_name}' are not installed by default."
+            logger.debug(
+                f"Dependencies for the handler '{handler_name}' are not installed."
             )
-            logger.info(
-                f'If you want to use "{handler_name}" please install "{dependencies}"'
-            )
+            logger.debug(get_handler_install_message(handler_name))
 
     # from mindsdb.utilities.fs import get_marked_processes_and_threads
     # marks = get_marked_processes_and_threads()
@@ -373,7 +363,9 @@ if __name__ == '__main__':
 
     async def join_process(process, name):
         try:
-            process.join()
+            while process.is_alive():
+                process.join(1)
+                await asyncio.sleep(0)
         except KeyboardInterrupt:
             logger.info("Got keyboard interrupt, stopping APIs")
             close_api_gracefully(apis)

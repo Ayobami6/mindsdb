@@ -74,6 +74,7 @@ class MongoDBHandler(DatabaseHandler):
             port=self.port,
             **kwargs
         )
+
         # detect database from connection
         if self.database is None:
             self.database = connection.get_database().name
@@ -116,10 +117,10 @@ class MongoDBHandler(DatabaseHandler):
                 callback(row=full_doc, key={'_id': _id})
 
     def disconnect(self):
-        if self.is_connected is False:
-            return
-        self.connection.close()
-        return
+        if self.is_connected:
+            self.connection.close()
+            self.is_connected = False
+
 
     def check_connection(self) -> StatusResponse:
         """
@@ -279,9 +280,9 @@ class MongoDBHandler(DatabaseHandler):
         return response
 
 connection_args = OrderedDict(
-    user={
+    username={
         'type': ARG_TYPE.STR,
-        'description': 'The user name used to authenticate with the MongoDB server.',
+        'description': 'The username used to authenticate with the MongoDB server.',
         'required': True,
         'label': 'User'
     },
@@ -294,7 +295,7 @@ connection_args = OrderedDict(
     database={
         'type': ARG_TYPE.STR,
         'description': 'The database name to use when connecting with the MongoDB server.',
-        'required': True,
+        'required': False,
         'label': 'Database'
     },
     host={

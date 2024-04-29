@@ -8,7 +8,7 @@ import numpy as np
 
 from mindsdb_sql.render.sqlalchemy_render import SqlalchemyRender
 
-from mindsdb.api.mysql.mysql_proxy.utilities.sql import query_df
+from mindsdb.api.executor.utilities.sql import query_df
 from mindsdb.api.mysql.mysql_proxy.utilities.lightwood_dtype import dtype
 
 # How to run:
@@ -41,7 +41,7 @@ class Test(BaseExecutorMockPredictor):
 
         self.execute("RETRAIN proj.test_predictor;")
 
-        ret = self.execute("SELECT * FROM proj.models_versions order by version;")
+        ret = self.execute("SELECT * FROM proj.models order by version;")
         assert len(ret.data) == 2
 
         ret = self.execute("DESCRIBE test_predictor")
@@ -652,7 +652,7 @@ class TestComplexQueries(BaseExecutorMockPredictor):
         assert mock_handler().query.call_count == 3
 
         # second is update
-        assert mock_handler().query.call_args_list[1][0][0].to_string() == "update table2 set a1=1, c1='ccc' where (a1 = 1) AND (b1 = 'ccc')"
+        assert mock_handler().query.call_args_list[1][0][0].to_string() == "update table2 set a1=1, c1='ccc' where a1 = 1 AND b1 = 'ccc'"
 
     @patch('mindsdb.integrations.handlers.postgres_handler.Handler')
     def test_update_in_integration(self, mock_handler):
@@ -722,7 +722,7 @@ class TestComplexQueries(BaseExecutorMockPredictor):
             return s
 
         # select for predictor
-        assert to_str(calls[0][0][0]) == 'SELECT * FROM tasks AS t WHERE t.a = 1'
+        assert to_str(calls[0][0][0]) == 'SELECT * FROM tasks AS t WHERE a = 1'
 
         # create table
         assert to_str(calls[1][0][0]) == 'CREATE TABLE table1 ( a INTEGER, b TEXT, c TEXT )'
@@ -759,7 +759,7 @@ class TestComplexQueries(BaseExecutorMockPredictor):
             return s
 
         # select for predictor
-        assert to_str(calls[0][0][0]) == 'SELECT * FROM tasks AS t WHERE t.a = 1'
+        assert to_str(calls[0][0][0]) == 'SELECT * FROM tasks AS t WHERE a = 1'
 
         # load table
         assert to_str(calls[1][0][0]) == "INSERT INTO table1 (a, b, c) VALUES (1, 'aaa', 'ccc'), (1, 'ccc', 'ccc')"

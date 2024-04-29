@@ -1,7 +1,7 @@
 import ast
 import hashlib
 from enum import Enum
-from typing import Any, List, Optional
+from typing import List, Optional
 
 import pandas as pd
 from mindsdb_sql.parser.ast import (
@@ -20,63 +20,12 @@ from mindsdb_sql.parser.ast.base import ASTNode
 
 from mindsdb.integrations.libs.response import RESPONSE_TYPE, HandlerResponse
 from mindsdb.utilities import log
-from mindsdb.integrations.utilities.sql_utils import conditions_to_filter
+from mindsdb.integrations.utilities.sql_utils import conditions_to_filter, FilterCondition, FilterOperator
 
 from ..utilities.sql_utils import query_traversal
 from .base import BaseHandler
 
 LOG = log.getLogger(__name__)
-
-
-class FilterOperator(Enum):
-    """
-    Enum for filter operators.
-    """
-
-    EQUAL = "="
-    NOT_EQUAL = "!="
-    LESS_THAN = "<"
-    LESS_THAN_OR_EQUAL = "<="
-    GREATER_THAN = ">"
-    GREATER_THAN_OR_EQUAL = ">="
-    IN = "IN"
-    NOT_IN = "NOT IN"
-    BETWEEN = "BETWEEN"
-    NOT_BETWEEN = "NOT BETWEEN"
-    LIKE = "LIKE"
-    NOT_LIKE = "NOT LIKE"
-    IS_NULL = "IS NULL"
-    IS_NOT_NULL = "IS NOT NULL"
-
-
-class FilterCondition:
-    """
-    Base class for filter conditions.
-    """
-
-    def __init__(self, column: str, op: FilterOperator, value: Any):
-        self.column = column
-        self.op = op
-        self.value = value
-
-    def __eq__(self, __value: object) -> bool:
-        if isinstance(__value, FilterCondition):
-            return (
-                self.column == __value.column
-                and self.op == __value.op
-                and self.value == __value.value
-            )
-        else:
-            return False
-
-    def __repr__(self) -> str:
-        return f"""
-            FilterCondition(
-                column={self.column},
-                op={self.op},
-                value={self.value}
-            )
-        """
 
 
 class TableField(Enum):
@@ -126,7 +75,7 @@ class VectorStoreHandler(BaseHandler):
             self.disconnect()
 
     def disconnect(self):
-        raise NotImplementedError()
+        pass
 
     def _value_or_self(self, value):
         if isinstance(value, Constant):
@@ -213,12 +162,10 @@ class VectorStoreHandler(BaseHandler):
         """
         Dispatch drop table query to the appropriate method.
         """
-        # parse key arguments
-        table_names = [table.parts[-1] for table in query.tables]
+        table_name = query.tables[0].parts[-1]
         if_exists = getattr(query, "if_exists", False)
-        for table_name in table_names:
-            self.drop_table(table_name, if_exists=if_exists)
-        return HandlerResponse(resp_type=RESPONSE_TYPE.OK)
+
+        return self.drop_table(table_name, if_exists=if_exists)
 
     def _dispatch_insert(self, query: Insert):
         """
@@ -244,13 +191,11 @@ class VectorStoreHandler(BaseHandler):
             content = None
 
         # get id column if it is present
+        ids = None
         if TableField.ID.value in columns:
             id_col_index = columns.index("id")
             ids = [self._value_or_self(row[id_col_index]) for row in query.values]
-        elif TableField.CONTENT.value is not None:
-            # use hashed value
-            ids = [hashlib.md5(str(val).encode()).hexdigest() for val in content]
-        else:
+        elif TableField.CONTENT.value is None:
             raise Exception("Content or id is required!")
 
         # get embeddings column if it is present
@@ -273,19 +218,15 @@ class VectorStoreHandler(BaseHandler):
             metadata = None
 
         # create dataframe
-        data = pd.DataFrame(
-            {
-                TableField.ID.value: ids,
-                TableField.CONTENT.value: content,
-                TableField.EMBEDDINGS.value: embeddings,
-                TableField.METADATA.value: metadata,
-            }
-        )
+        data = {
+            TableField.CONTENT.value: content,
+            TableField.EMBEDDINGS.value: embeddings,
+            TableField.METADATA.value: metadata,
+        }
+        if ids is not None:
+            data[TableField.ID.value] = ids
 
-        # remove duplicated ids
-        data = data.drop_duplicates([TableField.ID.value])
-
-        return self.do_upsert(table_name, data)
+        return self.do_upsert(table_name, pd.DataFrame(data))
 
     def _dispatch_update(self, query: Update):
         """
@@ -316,10 +257,6 @@ class VectorStoreHandler(BaseHandler):
         if TableField.CONTENT.value not in row:
             raise Exception("Content is required!")
 
-        if TableField.ID.value not in row:
-            value = row[TableField.CONTENT.value]
-            row[TableField.ID.value] = hashlib.md5(str(value).encode()).hexdigest()
-
         # store
         df = pd.DataFrame([row])
 
@@ -329,6 +266,22 @@ class VectorStoreHandler(BaseHandler):
         # if handler supports it, call upsert method
 
         id_col = TableField.ID.value
+        content_col = TableField.CONTENT.value
+
+        def gen_hash(v):
+            return hashlib.md5(str(v).encode()).hexdigest()
+
+        if id_col not in df.columns:
+            # generate for all
+            df[id_col] = df[content_col].apply(gen_hash)
+        else:
+            # generate for empty
+            for i in range(len(df)):
+                if pd.isna(df.loc[i, id_col]):
+                    df.loc[i, id_col] = gen_hash(df.loc[i, content_col])
+
+        # remove duplicated ids
+        df = df.drop_duplicates([TableField.ID.value])
 
         # id is string TODO is it ok?
         df[id_col] = df[id_col].apply(str)

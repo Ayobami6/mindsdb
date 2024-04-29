@@ -3,7 +3,7 @@ import datetime as dt
 
 from mindsdb.integrations.libs.api_handler import APIChatHandler
 
-from mindsdb.api.mysql.mysql_proxy.controllers.session_controller import SessionController
+from mindsdb.api.executor.controllers.session_controller import SessionController
 from mindsdb.interfaces.storage import db
 from mindsdb.interfaces.tasks.task import BaseTask
 
@@ -23,6 +23,7 @@ class ChatBotTask(BaseTask):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.bot_id = self.object_id
+        self.agent_id = None
 
         self.session = SessionController()
 
@@ -34,12 +35,13 @@ class ChatBotTask(BaseTask):
         bot_record = db.ChatBots.query.get(self.bot_id)
 
         self.base_model_name = bot_record.model_name
+        self.agent_id = bot_record.agent_id
         self.project_name = db.Project.query.get(bot_record.project_id).name
         self.project_datanode = self.session.datahub.get(self.project_name)
 
         database_name = db.Integration.query.get(bot_record.database_id).name
 
-        self.chat_handler = self.session.integration_controller.get_handler(database_name)
+        self.chat_handler = self.session.integration_controller.get_data_handler(database_name)
         if not isinstance(self.chat_handler, APIChatHandler):
             raise Exception(f"Can't use chat database: {database_name}")
 
@@ -74,7 +76,9 @@ class ChatBotTask(BaseTask):
         except (SystemExit, KeyboardInterrupt):
             raise
         except Exception:
-            self.set_error(str(traceback.format_exc()))
+            error = traceback.format_exc()
+            logger.error(error)
+            self.set_error(str(error))
 
     def _on_message(self, chat_memory, message: ChatBotMessage):
         # add question to history
